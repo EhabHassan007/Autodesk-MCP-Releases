@@ -1,0 +1,57 @@
+name: Validate and attach beta17 draft assets
+on:
+  push:
+    branches: [automation/beta17-draft-assets]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: beta17-draft-assets
+  cancel-in-progress: false
+jobs:
+  windows-checks:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Verify and unpack the exact candidate
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = Join-Path $pwd 'release-candidates/beta17'
+          $zip = Join-Path $base 'Autodesk-MCP-Connector-1.0.0-beta.17.zip'
+          $manifest = Get-Content (Join-Path $base 'latest.json') -Raw | ConvertFrom-Json
+          if ((Get-FileHash $zip -Algorithm SHA256).Hash -ne $manifest.sha256) { throw 'Checksum mismatch' }
+          if ($manifest.version -ne '1.0.0-beta.17') { throw 'Wrong release version' }
+          Expand-Archive $zip (Join-Path $base 'unpacked')
+          $share = Join-Path $base 'unpacked/Autodesk-MCP-Connector-1.0.0-beta.17'
+          Expand-Archive (Join-Path $share 'Support/Autodesk-MCP-Payload.zip') (Join-Path $base 'source')
+          Move-Item (Join-Path $base 'source/Autodesk-MCP-Payload') (Join-Path $base 'source/runtime')
+      - name: Windows PowerShell 5.1 regression checks
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = Join-Path $pwd 'release-candidates/beta17'
+          foreach ($name in @('check-beta15', 'test-central-sync', 'test-central-preview', 'test-task-bootstrap', 'test-workflow-tools')) {
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $base "tests/$name.ps1")
+            if ($LASTEXITCODE -ne 0) { throw "$name failed" }
+          }
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $base 'tests/test-beta15-upgrade.ps1') -PackagePath (Join-Path $base 'Autodesk-MCP-Connector-1.0.0-beta.17.zip')
+          if ($LASTEXITCODE -ne 0) { throw 'Updater regression failed' }
+      - name: Windows installer interface smoke test
+        shell: powershell
+        run: |
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File './release-candidates/beta17/unpacked/Autodesk-MCP-Connector-1.0.0-beta.17/Support/Install-Autodesk-MCP-Connector.ps1' -SmokeTest
+          if ($LASTEXITCODE -ne 0) { throw 'Installer smoke test failed' }
+  attach-draft:
+    needs: windows-checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Attach verified files without publishing the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/attach-beta17.py
