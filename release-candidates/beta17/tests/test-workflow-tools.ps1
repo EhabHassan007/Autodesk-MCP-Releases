@@ -4,24 +4,16 @@ $testLocalAppData = Join-Path ([IO.Path]::GetTempPath()) ('workflow-test-' + [Gu
 New-Item -ItemType Directory $testLocalAppData -Force | Out-Null
 $env:LOCALAPPDATA = $testLocalAppData
 try {
-Write-Host 'Loading bridge library'
-Set-PSDebug -Trace 1
 . (Join-Path $PSScriptRoot '../source/runtime/src/autodesk/autodesk-bridge.ps1') -LibraryOnly
-Set-PSDebug -Off
-Write-Host 'Bridge library loaded'
 function Call($name,$arguments) {
  Invoke-AutodeskMcpRequest ([pscustomobject]@{id=1;method='tools/call';params=[pscustomobject]@{name=$name;arguments=$arguments}})
 }
-Write-Host 'Listing workflows'
 $r=Call 'list_skill_workflows' @{}
-Write-Host 'Listed workflows'
 $d=$r.result.content[0].text|ConvertFrom-Json
 if($r.result.isError -or $d.skills.Count -ne 27){throw 'Skill inventory mismatch'}
-Write-Host 'Reading workflow'
 $r=Call 'read_skill_workflow' @{name='revit-read-write'}
-Write-Host 'Read workflow'
 $d=$r.result.content[0].text|ConvertFrom-Json
-if($r.result.isError -or $d.content -notmatch 'document_info'){throw 'Cannot read workflow'}
+if($r.result.isError -or $d.content -isnot [string] -or $d.content -notmatch 'document_info'){throw 'Cannot read workflow'}
 foreach($file in @('../VERSION','/etc/passwd','C:\Windows\win.ini','references/../../VERSION')){
  $r=Call 'read_skill_workflow' @{name='revit-read-write';file=$file}
  if(-not $r.result.isError){throw "Path escape accepted: $file"}
